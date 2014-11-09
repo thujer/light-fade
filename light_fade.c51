@@ -1,0 +1,184 @@
+//-------------------------------------------------------------------------//
+/////////////////////////////////////////////////////////////////////////////
+// +---------------------------------------------------------------------+ //
+// |                           Light fade driver                         | //
+// |                     ------------------------------                  | //
+// |                              Verze 1.01                             | //
+// |                            MCU: 89LPC922                            | //
+// |                                                                     | //
+// |                         Copyright Tomas Hujer                       | //
+// |                             (c) 2005-2007                           | //
+// |                      thomas.hoodger(at)gmail.com                    | //
+// |                                                                     | //
+// +---------------------------------------------------------------------+ //
+// |                                                                     | //
+// |  Regulace svitu LED diod a zarovek, plynule pomale rozsveceni       | //
+// |  a zhasinani je simulovano menicim se pomerem svetlo-tma,           | //
+// |  s konstantni periodou. Realizovano stavovym automatem, ridi se     | //
+// |  podle binarnich priznaku:                                          | //
+// |                                                                     | //
+// |         light_lightup:       1 = rozsveceni                         | //
+// |                              0 = stmivani                           | //
+// |                                                                     | //
+// |         light_process_stop:  1 = zmena svitu zastavena              | //
+// |                              0 = probihajici zmena svitu            | //
+// |                                                                     | //
+// |  dobu jednotlivych stavu urcuji 2 citace light_timer_light a        | //
+// |  light_timer_dark, ktere jsou plneny menicimi se casovymi           | //
+// |  hodnotami light_time_light a light_time_dark.                      | //
+// |                                                                     | //
+// |  Dobu 1 kroku je mozne odvodit od casovace TIMER_LED, ktery je      | //
+// |  konstantou LIGHT_DELAY - pokud je nulova, je kazdy dalsi krok      | //
+// |  proveden pri kazdem projeti hlavni programove smycky               | //
+// |                                                                     | //
+// +---------------------------------------------------------------------+ //
+//    Version history:                                                     //
+//                   ----------------------------------------------        //
+//       1.01         Prvni vyvojova verze                                 //
+//                   ----------------------------------------------        //
+//                                                                         //
+// +---------------------------------------------------------------------+ //
+//    TODO:                                                                //
+//                                                                         //
+//     - pro nezavislost na jinych modulech je mozne nahradit nastavovani  // 
+//       pinu pro spinani svetelneho prvku zapisem do bufferu udalosti,    //
+//       avsak je nutne zvazit, zda by nedochazelo k jeho preplneni,       //
+//       pripadne ke zbytecnemu zpozdeni vlivem zapisu, detekci a cteni    //
+//       z bufferu udalosti                                                //
+//                                                                         //
+// ----------------------------------------------------------------------- //
+/////////////////////////////////////////////////////////////////////////////
+
+#include "reg922.h"
+#include "timers.h"
+#include "pin.h"
+
+#define LIGHT_DELAY  0
+
+#define LIGHT_TIME_MAX 500
+
+
+// NPN
+//#define LIGHT_ON  1
+//#define LIGHT_OFF 0
+
+// PNP
+#define LIGHT_ON  0
+#define LIGHT_OFF 1
+
+
+
+sbit    light_pin = P0^7;
+
+bit     light_lightup;        // priznak rozsveceni LED
+bit     light_process_stop;   // zastaveni simulace
+
+int     light_timer_light;    // citac doby svitu
+int     light_timer_dark;     // citac doby tmy
+
+int     light_time_light;     // doba svitu
+int     light_time_dark;      // doba tmy
+
+// ----------------------------------------------------------------------
+
+void light_proc()
+{
+    if(~light_process_stop)
+    {
+        if(!TIMER_LED)
+        {
+            TIMER_LED = LIGHT_DELAY;
+    
+            if(light_timer_light)               // doba svitu
+            {
+                light_timer_light--;
+                light_pin = LIGHT_ON;
+            }
+            else
+            {
+                if(light_timer_dark)            // doba tmy
+                {
+                    light_timer_dark--;
+                    light_pin = LIGHT_OFF;
+                }
+                else
+                {
+                    light_timer_light = light_time_light;
+                    light_timer_dark  = light_time_dark;
+    
+                    if(light_lightup)                      // pokud se LED rozsveci
+                    {
+                        if(light_time_dark)
+                            light_time_dark--;
+    
+                        if(light_time_light < LIGHT_TIME_MAX)
+                        {
+                            light_time_light++;
+                        }
+
+                        if((light_time_light >= LIGHT_TIME_MAX) && (!light_time_dark))
+                        {
+                            light_pin = LIGHT_ON;                                   // nech sepnuto
+                            light_process_stop = 1;
+                        }
+                    }
+                    else
+                    {
+                        if(light_time_light)                
+                            light_time_light--;
+
+                        if(light_time_dark < LIGHT_TIME_MAX)  
+                        {
+                            light_time_dark++;
+                        }
+
+                        if((light_time_dark >= LIGHT_TIME_MAX) && (!light_time_light))
+                        {
+                            light_process_stop = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }        
+}
+
+
+void light_light_fade_in()
+{
+    TIMER_LED = LIGHT_DELAY;
+
+    light_lightup = 1;
+
+    //light_timer_light = light_time_light = 0;
+    //light_timer_dark  = light_time_dark  = LIGHT_TIME_MAX;
+
+    light_process_stop = 0;
+}
+
+
+
+void light_light_fade_out()
+{
+    TIMER_LED = LIGHT_DELAY;
+
+    light_lightup = 0;
+
+    //light_timer_light = light_time_light = LIGHT_TIME_MAX;
+    //light_timer_dark  = light_time_dark  = 0;
+
+    light_process_stop = 0;
+}
+
+
+
+void light_init()
+{
+    pin_set(PORT_ID_P0, 7, PIN_TYPE_OPEN_DRAIN);                      // set pin type P0.7 for PNP transistor
+    //pin_set(PORT_ID_P0, 7, PIN_TYPE_PUSH_PULL);                         // set pin type P0.7 for NPN transistor
+
+    light_timer_light = light_time_light = 0;
+    light_timer_dark  = light_time_dark  = LIGHT_TIME_MAX;
+
+    light_light_fade_in();
+}
